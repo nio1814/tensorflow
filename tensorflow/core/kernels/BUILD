@@ -2698,6 +2698,20 @@ tf_kernel_library(
     ],
 )
 
+tf_kernel_library(
+    name = "depthwise_conv_op_3d",
+    prefix = "depthwise_conv3d_op_3d",
+    deps = [
+        ":bounds_check",
+        ":conv_ops",
+        ":ops_util",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:nn_ops_op_lib",
+    ]
+)
+
 cc_library(
     name = "nn",
     deps = [
@@ -2706,6 +2720,7 @@ cc_library(
         ":conv_ops",
         ":depthwise_conv_grad_op",
         ":depthwise_conv_op",
+        ":depthwise_conv_op_3d",
         ":dilation_ops",
         ":fused_batch_norm_op",
         ":in_topk_op",

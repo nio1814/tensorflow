@@ -413,6 +413,84 @@ Status DepthwiseConv2DNativeShape(shape_inference::InferenceContext* c) {
   return Status::OK();
 }
 
+Status DepthwiseConv3DNativeShape(shape_inference::InferenceContext* c) {
+  ShapeHandle input_shape;
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 5, &input_shape));
+  ShapeHandle filter_shape;
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 5, &filter_shape));
+
+  std::vector<int32> strides;
+  TF_RETURN_IF_ERROR(c->GetAttr("strides", &strides));
+
+  if (strides.size() != 5) {
+    return errors::InvalidArgument(
+        "DepthwiseConv3D requires the stride attribute to contain 5 values, "
+        "but got: ", strides.size());
+  }
+
+  string data_format;
+  Status s = c->GetAttr("data_format", &data_format);
+
+  int32 stride_planes, stride_rows, stride_cols;
+  if (s.ok() && data_format == "NCDHW") {
+    // Convert input_shape to NDHWC.
+    auto dim = [&](char dimension) {
+      return c->Dim(input_shape, GetTensorDimIndex<3>(FORMAT_NCHW, dimension));
+    };
+    input_shape =
+        c->MakeShape({{dim('N'), dim('0'), dim('1'), dim('2'), dim('C')}});
+    stride_planes = strides[2];
+    stride_cols = strides[3];
+    stride_rows = strides[4];
+  } else {
+    stride_planes = strides[1];
+    stride_rows = strides[2];
+    stride_cols = strides[3];
+  }
+
+  DimensionHandle batch_size_dim = c->Dim(input_shape, 0);
+  DimensionHandle in_planes_dim = c->Dim(input_shape, 1);
+  DimensionHandle in_rows_dim = c->Dim(input_shape, 2);
+  DimensionHandle in_cols_dim = c->Dim(input_shape, 3);
+
+  DimensionHandle filter_planes_dim = c->Dim(filter_shape, 0);
+  DimensionHandle filter_rows_dim = c->Dim(filter_shape, 1);
+  DimensionHandle filter_cols_dim = c->Dim(filter_shape, 2);
+  DimensionHandle input_depth = c->Dim(filter_shape, 3);
+  DimensionHandle depth_multiplier = c->Dim(filter_shape, 4);
+
+  // Check that the input depths are compatible.
+  TF_RETURN_IF_ERROR(
+      c->Merge(c->Dim(input_shape, 4), input_depth, &input_depth));
+
+  DimensionHandle output_depth;
+  TF_RETURN_IF_ERROR(c->Multiply(input_depth, depth_multiplier, &output_depth));
+
+  Padding padding;
+  TF_RETURN_IF_ERROR(c->GetAttr("padding", &padding));
+
+  DimensionHandle output_planes, output_rows, output_cols;
+
+  TF_RETURN_IF_ERROR(
+      GetWindowedOutputSizeFromDims(c, in_planes_dim, filter_planes_dim,
+                                    stride_planes, padding, &output_planes));
+  TF_RETURN_IF_ERROR(GetWindowedOutputSizeFromDims(
+      c, in_rows_dim, filter_rows_dim, stride_rows, padding, &output_rows));
+  TF_RETURN_IF_ERROR(GetWindowedOutputSizeFromDims(
+      c, in_cols_dim, filter_cols_dim, stride_cols, padding, &output_cols));
+
+  ShapeHandle output_shape;
+  if (data_format == "NCDHW") {
+    output_shape = c->MakeShape({batch_size_dim, output_depth,
+                                 output_planes, output_rows, output_cols});
+  } else {
+    output_shape = c->MakeShape({batch_size_dim, output_planes, output_rows,
+                                 output_cols, output_depth});
+  }
+  c->set_output(0, output_shape);
+  return Status::OK();
+}
+
 Status AvgPoolShape(shape_inference::InferenceContext* c) {
   ShapeHandle input_shape;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 4, &input_shape));

@@ -936,6 +936,50 @@ output: 4-D with shape
   the `filter` input of the convolution.
 )doc");
 
+REGISTER_OP("DepthwiseConv3dNative")
+    .Input("input: T")
+    .Input("filter: T")
+    .Output("output: T")
+    .Attr("T: {float, double}")
+    .Attr("strides: list(int)")
+    .Attr(GetPaddingAttrString())
+    .Attr(GetConvnetDataFormatAttrString())
+    .SetShapeFn(shape_inference::DepthwiseConv3DNativeShape)
+    .Doc(R"doc(
+Computes a 3-D depthwise convolution given 5-D `input` and `filter` tensors.
+
+Given an input tensor of shape
+`[batch, in_depth, in_height, in_width, in_channels]` and a filter / kernel
+tensor of shape
+`[filter_depth, filter_height, filter_width, in_channels, channel_multiplier]`,
+containing `in_channels` convolutional filters of depth 1, `depthwise_conv2d`
+applies a different filter to each input channel (expanding from 1 channel to
+`channel_multiplier` channels for each), then concatenates the results
+together. Thus, the output has `in_channels * channel_multiplier` channels.
+
+```
+for k in 0..in_channels-1
+  for q in 0..channel_multiplier-1
+    output[b, z, y, x, k * channel_multiplier + q] =
+      sum_{dz, dy, dx} input[b, strides[1] * z + dz, strides[2] * y + dy,
+                             strides[3] * x + dx, k] *
+                        filter[dz, dy, dx, k, q]
+```
+
+Must have `strides[0] = strides[4] = 1`.  The most common case is same
+stride along depth, height and width, that is,
+`strides = [1, stride, stride, stride, 1]`.
+
+strides: 1-D of length 5.  The stride of the sliding window for each dimension
+  of `input`.
+padding: The type of padding algorithm to use.
+data_format: Specify the data format of the input and output data. With the
+    default format "NDHWC", the data is stored in the order of:
+        [batch, height, width, channels].
+    Alternatively, the format could be "NCDHW", the data storage order of:
+        [batch, channels, height, width].
+)doc");
+
 // --------------------------------------------------------------------------
 REGISTER_OP("Conv3D")
     .Input("input: T")

@@ -170,6 +170,9 @@ Status Conv3DShape(shape_inference::InferenceContext* c);
 // Shape function for DepthwiseConv2D-like operations.
 Status DepthwiseConv2DNativeShape(shape_inference::InferenceContext* c);
 
+// Shape function for DepthwiseConv3D-like operations.
+Status DepthwiseConv3DNativeShape(shape_inference::InferenceContext* c);
+
 // Shape function for AvgPool-like operations.
 Status AvgPoolShape(shape_inference::InferenceContext* c);
 
