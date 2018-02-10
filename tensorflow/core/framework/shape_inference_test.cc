@@ -17,6 +17,7 @@ limitations under the License.
 #include "tensorflow/core/framework/fake_input.h"
 #include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/op_def_builder.h"
+#include "tensorflow/core/framework/tensor_shape.pb.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
@@ -36,19 +37,11 @@ OpDef MakeOpDefWithLists() {
   return op_reg_data.op_def;
 }
 
-TensorShapeProto S(std::initializer_list<int64> dims) {
-  PartialTensorShape shape(dims);
-  TensorShapeProto ret;
-  shape.AsProto(&ret);
-  return ret;
+PartialTensorShape S(std::initializer_list<int64> dims) {
+  return PartialTensorShape(dims);
 }
 
-TensorShapeProto Unknown() {
-  PartialTensorShape shape;
-  TensorShapeProto ret;
-  shape.AsProto(&ret);
-  return ret;
-}
+PartialTensorShape Unknown() { return PartialTensorShape(); }
 
 }  // namespace
 
@@ -366,11 +359,11 @@ TEST_F(ShapeInferenceTest, WithRankAtMost) {
   // WithRankAtMost on a shape with unknown dimensionality always succeeds.
   EXPECT_TRUE(c.WithRankAtMost(in0, 1, &s1).ok());
   EXPECT_EQ("?", c.DebugString(s1));
-  EXPECT_FALSE(SameHandle(in0, s1));
+  EXPECT_TRUE(SameHandle(in0, s1));
 
   EXPECT_TRUE(c.WithRankAtMost(in0, 2, &s2).ok());
   EXPECT_EQ("?", c.DebugString(s2));
-  EXPECT_FALSE(SameHandle(s1, s2));
+  EXPECT_TRUE(SameHandle(s1, s2));
 
   // WithRankAtMost on shape with known dimensionality.
   s1 = in1;
@@ -405,11 +398,11 @@ TEST_F(ShapeInferenceTest, WithRankAtLeast) {
   // WithRankAtLeast on a shape with unknown dimensionality always succeeds.
   EXPECT_TRUE(c.WithRankAtLeast(in0, 1, &s1).ok());
   EXPECT_EQ("?", c.DebugString(s1));
-  EXPECT_FALSE(SameHandle(in0, s1));
+  EXPECT_TRUE(SameHandle(in0, s1));
 
   EXPECT_TRUE(c.WithRankAtLeast(in0, 2, &s2).ok());
   EXPECT_EQ("?", c.DebugString(s2));
-  EXPECT_FALSE(SameHandle(s1, s2));
+  EXPECT_TRUE(SameHandle(s1, s2));
 
   // WithRankAtLeast on shape with known dimensionality.
   s1 = in1;
@@ -492,17 +485,32 @@ TEST_F(ShapeInferenceTest, MergeDim) {
   EXPECT_TRUE(c.Merge(d_unknown, d_unknown_b, &out).ok());
   EXPECT_TRUE(SameHandle(d_unknown, out));
 
-  // Merging with self returns self.
+  auto merged_dims = c.MergedDims();
+  ASSERT_EQ(3, merged_dims.size());
+  EXPECT_TRUE(merged_dims[0].first.SameHandle(d2));
+  EXPECT_TRUE(merged_dims[0].second.SameHandle(d_unknown));
+  EXPECT_TRUE(merged_dims[1].first.SameHandle(d_unknown));
+  EXPECT_TRUE(merged_dims[1].second.SameHandle(d2));
+  EXPECT_TRUE(merged_dims[2].first.SameHandle(d_unknown));
+  EXPECT_TRUE(merged_dims[2].second.SameHandle(d_unknown_b));
+
+  // Merging with self is a no-op and returns self.
   EXPECT_TRUE(c.Merge(d2, d2, &out).ok());
   EXPECT_TRUE(SameHandle(d2, out));
   EXPECT_TRUE(c.Merge(d_unknown, d_unknown, &out).ok());
   EXPECT_TRUE(SameHandle(d_unknown, out));
 
-  // Merging equal values returns first one.
+  merged_dims = c.MergedDims();
+  EXPECT_EQ(3, merged_dims.size());
+
+  // Merging equal values is a no op and returns first one.
   EXPECT_TRUE(c.Merge(d2, d2_b, &out).ok());
   EXPECT_TRUE(SameHandle(d2, out));
   EXPECT_TRUE(c.Merge(d2_b, d2, &out).ok());
   EXPECT_TRUE(SameHandle(d2_b, out));
+
+  merged_dims = c.MergedDims();
+  EXPECT_EQ(3, merged_dims.size());
 
   // Merging unequal values is an error.
   EXPECT_TRUE(
@@ -517,6 +525,9 @@ TEST_F(ShapeInferenceTest, MergeDim) {
               "Invalid argument: Dimensions must be equal, but are 1 and 2"));
 
   EXPECT_FALSE(IsSet(out));
+
+  merged_dims = c.MergedDims();
+  EXPECT_EQ(3, merged_dims.size());
 }
 
 TEST_F(ShapeInferenceTest, RelaxDim) {
@@ -533,9 +544,10 @@ TEST_F(ShapeInferenceTest, RelaxDim) {
   auto d_unknown_b = c.Dim(c.input(0), 4);
   DimensionHandle out;
 
-  // Relaxing anything with unknown returns a new unknown.
+  // Relaxing anything with unknown returns a new unknown or the existing
+  // unknown.
   Relax(&c, d2, d_unknown, &out);
-  EXPECT_FALSE(SameHandle(d_unknown, out));
+  EXPECT_TRUE(SameHandle(d_unknown, out));
   EXPECT_FALSE(SameHandle(d_unknown_b, out));
   EXPECT_EQ(InferenceContext::kUnknownDim, c.Value(out));
   Relax(&c, d_unknown, d2, &out);
@@ -543,7 +555,7 @@ TEST_F(ShapeInferenceTest, RelaxDim) {
   EXPECT_EQ(InferenceContext::kUnknownDim, c.Value(out));
   Relax(&c, d_unknown, d_unknown_b, &out);
   EXPECT_FALSE(SameHandle(d_unknown, out));
-  EXPECT_FALSE(SameHandle(d_unknown_b, out));
+  EXPECT_TRUE(SameHandle(d_unknown_b, out));
   EXPECT_EQ(InferenceContext::kUnknownDim, c.Value(out));
 
   // Relaxing with self returns self.
@@ -591,7 +603,7 @@ TEST_F(ShapeInferenceTest, RelaxShape) {
   EXPECT_EQ("?", c.DebugString(out));
   Relax(&c, s_unknown, s_unknown_b, &out);
   EXPECT_FALSE(SameHandle(s_unknown, out));
-  EXPECT_FALSE(SameHandle(s_unknown_b, out));
+  EXPECT_TRUE(SameHandle(s_unknown_b, out));
   EXPECT_EQ("?", c.DebugString(out));
 
   // Relaxing with self returns self.
@@ -612,7 +624,7 @@ TEST_F(ShapeInferenceTest, RelaxShape) {
   Relax(&c, s_u_2, s_1_u, &out);
   EXPECT_EQ("[?,?]", c.DebugString(out));
   EXPECT_FALSE(SameHandle(c.Dim(s_u_2, 0), c.Dim(out, 0)));
-  EXPECT_FALSE(SameHandle(c.Dim(s_1_u, 1), c.Dim(out, 1)));
+  EXPECT_TRUE(SameHandle(c.Dim(s_1_u, 1), c.Dim(out, 1)));
   auto s_u1 = c.UnknownShapeOfRank(1);
   auto s_u2 = c.UnknownShapeOfRank(1);
   Relax(&c, s_u1, s_u2, &out);
@@ -626,7 +638,7 @@ TEST_F(ShapeInferenceTest, RelaxShape) {
   EXPECT_EQ("[?,?]", c.DebugString(out));
   out = s_unknown;
   Relax(&c, s_1_3, s_u_2, &out);
-  EXPECT_FALSE(SameHandle(c.Dim(s_u_2, 0), c.Dim(out, 0)));
+  EXPECT_TRUE(SameHandle(c.Dim(s_u_2, 0), c.Dim(out, 0)));
   EXPECT_EQ("[?,?]", c.DebugString(out));
   out = s_unknown;
 
@@ -659,9 +671,21 @@ TEST_F(ShapeInferenceTest, MergeShape) {
   EXPECT_TRUE(c.Merge(s_unknown, s_unknown_b, &out).ok());
   EXPECT_TRUE(SameHandle(s_unknown, out));
 
+  auto merged_shapes = c.MergedShapes();
+  ASSERT_EQ(3, merged_shapes.size());
+  EXPECT_TRUE(merged_shapes[0].first.SameHandle(s_unknown));
+  EXPECT_TRUE(merged_shapes[0].second.SameHandle(s_1_2));
+  EXPECT_TRUE(merged_shapes[1].first.SameHandle(s_u_2));
+  EXPECT_TRUE(merged_shapes[1].second.SameHandle(s_unknown));
+  EXPECT_TRUE(merged_shapes[2].first.SameHandle(s_unknown));
+  EXPECT_TRUE(merged_shapes[2].second.SameHandle(s_unknown_b));
+
   // Merging with self returns self.
   EXPECT_TRUE(c.Merge(s_1_2, s_1_2, &out).ok());
   EXPECT_TRUE(SameHandle(out, s_1_2));
+
+  merged_shapes = c.MergedShapes();
+  EXPECT_EQ(3, merged_shapes.size());
 
   // Merging where one of the inputs is the right answer - return that input.
   out = ShapeHandle();
@@ -671,6 +695,13 @@ TEST_F(ShapeInferenceTest, MergeShape) {
   EXPECT_TRUE(c.Merge(s_u_2, s_1_2, &out).ok());
   EXPECT_TRUE(SameHandle(s_1_2, out));
 
+  merged_shapes = c.MergedShapes();
+  ASSERT_EQ(5, merged_shapes.size());
+  EXPECT_TRUE(merged_shapes[3].first.SameHandle(s_1_2));
+  EXPECT_TRUE(merged_shapes[3].second.SameHandle(s_u_2));
+  EXPECT_TRUE(merged_shapes[4].first.SameHandle(s_u_2));
+  EXPECT_TRUE(merged_shapes[4].second.SameHandle(s_1_2));
+
   // Merging where neither input is the right answer.
   EXPECT_TRUE(c.Merge(s_u_2, s_1_u, &out).ok());
   EXPECT_FALSE(SameHandle(out, s_u_2));
@@ -679,10 +710,22 @@ TEST_F(ShapeInferenceTest, MergeShape) {
   EXPECT_TRUE(SameHandle(c.Dim(s_1_u, 0), c.Dim(out, 0)));
   EXPECT_TRUE(SameHandle(c.Dim(s_u_2, 1), c.Dim(out, 1)));
 
+  merged_shapes = c.MergedShapes();
+  ASSERT_EQ(7, merged_shapes.size());
+  EXPECT_TRUE(merged_shapes[5].first.SameHandle(s_u_2));
+  EXPECT_TRUE(merged_shapes[5].second.SameHandle(s_1_u));
+  EXPECT_TRUE(merged_shapes[6].first.SameHandle(s_u_2));
+  EXPECT_TRUE(merged_shapes[6].second.SameHandle(out));
+
   auto s_u1 = c.UnknownShapeOfRank(1);
   auto s_u2 = c.UnknownShapeOfRank(1);
   TF_EXPECT_OK(c.Merge(s_u1, s_u2, &out));
   EXPECT_TRUE(SameHandle(s_u1, out));
+
+  merged_shapes = c.MergedShapes();
+  ASSERT_EQ(8, merged_shapes.size());
+  EXPECT_TRUE(merged_shapes[7].first.SameHandle(s_u1));
+  EXPECT_TRUE(merged_shapes[7].second.SameHandle(s_u2));
 
   // Incompatible merges give errors and set out to nullptr.
   out = s_unknown;
@@ -708,13 +751,19 @@ TEST_F(ShapeInferenceTest, MergeShape) {
               "Invalid argument: Shapes must be equal rank, but are 1 and 2"));
 
   EXPECT_FALSE(IsSet(out));
+
+  merged_shapes = c.MergedShapes();
+  EXPECT_EQ(8, merged_shapes.size());
 }
 
 TEST_F(ShapeInferenceTest, MergePrefix) {
   NodeDef def;
   InferenceContext c(kVersion, &def, MakeOpDef(4, 2),
                      {
-                         Unknown(), S({-1, 2}), S({1, -1, 3}), S({2, 4}),
+                         Unknown(),
+                         S({-1, 2}),
+                         S({1, -1, 3}),
+                         S({2, 4}),
                      },
                      {}, {}, {});
 
@@ -936,6 +985,33 @@ TEST_F(ShapeInferenceTest, UnknownShape) {
   EXPECT_EQ("?", c.DebugString(u0));
   EXPECT_EQ("?", c.DebugString(u1));
   EXPECT_FALSE(SameHandle(u0, u1));
+}
+
+TEST_F(ShapeInferenceTest, KnownShapeToProto) {
+  NodeDef def;
+  std::vector<ShapeHandle> empty;
+  InferenceContext c(kVersion, &def, MakeOpDef(0, 2), empty, {}, {}, {});
+
+  auto s = c.MakeShape({1, 2, 3});
+  TensorShapeProto proto;
+  c.ShapeHandleToProto(s, &proto);
+
+  EXPECT_FALSE(proto.unknown_rank());
+  EXPECT_EQ(3, proto.dim_size());
+  EXPECT_EQ(1, proto.dim(0).size());
+}
+
+TEST_F(ShapeInferenceTest, UnknownShapeToProto) {
+  NodeDef def;
+  std::vector<ShapeHandle> empty;
+  InferenceContext c(kVersion, &def, MakeOpDef(0, 2), empty, {}, {}, {});
+
+  auto u0 = c.UnknownShape();
+  TensorShapeProto proto;
+  c.ShapeHandleToProto(u0, &proto);
+
+  EXPECT_TRUE(proto.unknown_rank());
+  EXPECT_EQ(0, proto.dim_size());
 }
 
 TEST_F(ShapeInferenceTest, Scalar) {
@@ -1537,7 +1613,7 @@ void ShapeInferenceTest::TestMergeHandles(bool input_not_output) {
                      {});
   auto make_shape = [&c](std::initializer_list<int64> dim_sizes) {
     ShapeHandle s;
-    TF_CHECK_OK(c.MakeShapeFromShapeProto(S(dim_sizes), &s));
+    TF_CHECK_OK(c.MakeShapeFromPartialTensorShape(S(dim_sizes), &s));
     return s;
   };
   auto get_shapes_and_types_from_context = [&](int idx) {
@@ -1648,7 +1724,7 @@ void ShapeInferenceTest::TestRelaxHandles(bool input_not_output) {
                      {});
   auto make_shape = [&c](std::initializer_list<int64> dim_sizes) {
     ShapeHandle s;
-    TF_CHECK_OK(c.MakeShapeFromShapeProto(S(dim_sizes), &s));
+    TF_CHECK_OK(c.MakeShapeFromPartialTensorShape(S(dim_sizes), &s));
     return s;
   };
   auto get_shapes_and_types_from_context = [&](int idx) {

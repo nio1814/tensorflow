@@ -138,9 +138,11 @@ class ConcatOpTest(test.TestCase):
         self.assertAllClose(result[ind], params[p[i]], 0.01)
 
   def testRandom(self):
+    self._testRandom(dtypes.bool)
     self._testRandom(dtypes.float32)
     self._testRandom(dtypes.int16)
     self._testRandom(dtypes.int32)
+    self._testRandom(dtypes.int64)
     self._testRandom(dtypes.bfloat16)
     self._testRandom(dtypes.complex64)
     self._testRandom(dtypes.complex128)
@@ -493,9 +495,9 @@ class ConcatOpTest(test.TestCase):
         p = []
         shape = np.array([7, 13])
         if test.is_gpu_available():
-          num_tensors = 10000
+          num_tensors = 5000
         else:
-          num_tensors = 1000
+          num_tensors = 500
         for i in np.arange(num_tensors):
           input_shape = shape
           placeholder = array_ops.placeholder(dtypes.float32, shape=input_shape)

@@ -108,8 +108,11 @@ std::unique_ptr<HloModule> MakeBigGraph() {
       HloInstruction::CreateUnary(vshape, HloOpcode::kCopy, param_v0));
   auto clamp = builder.AddInstruction(HloInstruction::CreateTernary(
       vshape, HloOpcode::kClamp, copy, param_v1, param_v2));
+  DotDimensionNumbers dot_dnums;
+  dot_dnums.add_lhs_contracting_dimensions(1);
+  dot_dnums.add_rhs_contracting_dimensions(0);
   auto dot = builder.AddInstruction(
-      HloInstruction::CreateBinary(vshape, HloOpcode::kDot, clamp, param_v0));
+      HloInstruction::CreateDot(vshape, clamp, param_v0, dot_dnums));
   auto tuple = builder.AddInstruction(
       HloInstruction::CreateTuple({dot, param_s, clamp}));
   auto scalar = builder.AddInstruction(
@@ -156,10 +159,9 @@ int main(int argc, char** argv) {
 
   auto module = xla::MakeBigGraph();
 
-  printf("Graph URL: %s\n",
-         xla::hlo_graph_dumper::DumpGraph(
-             *module->entry_computation(), "Example computation",
-             /*show_addresses=*/false, /*show_layouts=*/false)
-             .c_str());
+  printf("Graph URL: %s\n", xla::hlo_graph_dumper::DumpGraph(
+                                *module->entry_computation(),
+                                "Example computation", xla::DebugOptions())
+                                .c_str());
   return 0;
 }
