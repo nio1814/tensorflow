@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // =============================================================================
-#ifndef THIRD_PARTY_TENSORFLOW_CONTRIB_TENSOR_FOREST_KERNELS_V4_INPUT_DATA_H_
-#define THIRD_PARTY_TENSORFLOW_CONTRIB_TENSOR_FOREST_KERNELS_V4_INPUT_DATA_H_
+#ifndef TENSORFLOW_CONTRIB_TENSOR_FOREST_KERNELS_V4_INPUT_DATA_H_
+#define TENSORFLOW_CONTRIB_TENSOR_FOREST_KERNELS_V4_INPUT_DATA_H_
 #include <ctime>
 #include <unordered_map>
 #include "google/protobuf/any.pb.h"
@@ -67,7 +67,8 @@ class TensorDataSet {
   virtual ~TensorDataSet() {}
 
   void set_input_tensors(const Tensor& dense, const Tensor& sparse_indices,
-                         const Tensor& sparse_values);
+                         const Tensor& sparse_values,
+                         const Tensor& sparse_shape);
 
   float get_input_value(int offset, int col) {
     return (*dense_data_)(offset, col);
@@ -77,7 +78,7 @@ class TensorDataSet {
     if (dense_data_ != nullptr) {
       return dense_data_->dimensions()[0];
     } else if (sparse_indices_ != nullptr) {
-      return sparse_indices_->dimensions()[0];
+      return sparse_batch_size_;
     } else {
       return 0;
     }
@@ -92,9 +93,7 @@ class TensorDataSet {
   // an int32 you can avoid the atoi32.
   virtual float GetExampleValue(int example, int32 feature_id) const;
 
-  int num_features() {
-    return available_features_.size();
-  }
+  int num_features() { return available_features_.size(); }
 
   const Tensor& original_tensor() const { return original_dense_tensor_; }
 
@@ -109,6 +108,7 @@ class TensorDataSet {
   std::unique_ptr<DenseStorageType> dense_data_;
   std::unique_ptr<SparseIndicesStorageType> sparse_indices_;
   std::unique_ptr<SparseValuesStorageType> sparse_values_;
+  int sparse_batch_size_;
 
   Tensor original_dense_tensor_;
   const tensorforest::TensorForestDataSpec input_spec_;
@@ -121,4 +121,4 @@ class TensorDataSet {
 }  // namespace tensorforest
 }  // namespace tensorflow
 
-#endif  // THIRD_PARTY_TENSORFLOW_CONTRIB_TENSOR_FOREST_KERNELS_V4_INPUT_DATA_H_
+#endif  // TENSORFLOW_CONTRIB_TENSOR_FOREST_KERNELS_V4_INPUT_DATA_H_

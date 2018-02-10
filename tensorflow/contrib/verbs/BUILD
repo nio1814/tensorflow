@@ -7,6 +7,8 @@ package(default_visibility = [
 
 licenses(["notice"])  # Apache 2.0
 
+load("//tensorflow:tensorflow.bzl", "tf_cuda_library")
+
 exports_files(["LICENSE"])
 
 filegroup(
@@ -50,11 +52,8 @@ cc_library(
     srcs = ["verbs_util.cc"],
     hdrs = ["verbs_util.h"],
     deps = [
-        "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
-        "//tensorflow/core:gpu_runtime",
         "//tensorflow/core:lib",
-        "//tensorflow/core:lib_internal",
     ],
 )
 
@@ -108,13 +107,14 @@ cc_library(
         ":rdma_mgr",
         ":verbs_util",
         "//tensorflow/core:core_cpu_internal",
+        "//tensorflow/core:gpu_runtime",
         "//tensorflow/core:lib",
         "//tensorflow/core/distributed_runtime:base_rendezvous_mgr",
         "//tensorflow/core/distributed_runtime:worker_env",
     ],
 )
 
-cc_library(
+tf_cuda_library(
     name = "rdma_mgr",
     srcs = ["rdma_mgr.cc"],
     hdrs = ["rdma_mgr.h"],
@@ -132,7 +132,7 @@ cc_library(
     ],
 )
 
-cc_library(
+tf_cuda_library(
     name = "rdma",
     srcs = ["rdma.cc"],
     hdrs = ["rdma.h"],
@@ -141,6 +141,8 @@ cc_library(
         "//conditions:default": [],
     }),
     deps = [
+        ":grpc_verbs_client",
+        ":verbs_service_proto_cc",
         ":verbs_util",
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
