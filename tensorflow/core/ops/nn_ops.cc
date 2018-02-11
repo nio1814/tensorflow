@@ -503,14 +503,17 @@ REGISTER_OP("DepthwiseConv2dNativeBackpropFilter")
       return Status::OK();
     });
 
+// --------------------------------------------------------------------------
+
 REGISTER_OP("DepthwiseConv3dNative")
     .Input("input: T")
     .Input("filter: T")
     .Output("output: T")
-    .Attr("T: {float, double}")
+    .Attr("T: {half, bfloat16, float, double}")
     .Attr("strides: list(int)")
     .Attr(GetPaddingAttrString())
     .Attr(GetConvnetDataFormatAttrString())
+    .Attr("dilations: list(int) = [1, 1, 1, 1, 1]")
     .SetShapeFn(shape_inference::DepthwiseConv3DNativeShape)
     .Doc(R"doc(
 Computes a 3-D depthwise convolution given 5-D `input` and `filter` tensors.
