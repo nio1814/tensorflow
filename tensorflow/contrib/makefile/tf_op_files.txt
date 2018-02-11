@@ -235,6 +235,7 @@ tensorflow/core/kernels/avgpooling_op.cc
 tensorflow/core/kernels/argmax_op.cc
 tensorflow/core/kernels/aggregate_ops.cc
 tensorflow/core/kernels/depthwise_conv_op.cc
+tensorflow/core/kernels/depthwise_conv_op_3d.cc
 tensorflow/core/kernels/dequantize_op.cc
 tensorflow/core/kernels/meta_support.cc
 tensorflow/core/kernels/population_count_op.cc

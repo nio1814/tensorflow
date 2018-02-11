@@ -3178,8 +3178,8 @@ tf_kernel_library(
 )
 
 tf_kernel_library(
-    name = "depthwise_conv_op",
-    prefix = "depthwise_conv_op",
+    name = "depthwise_conv_ops",
+    prefix = "depthwise_conv_ops",
     deps = [
         ":bounds_check",
         ":conv_ops",
@@ -3192,11 +3192,12 @@ tf_kernel_library(
 )
 
 tf_kernel_library(
-    name = "depthwise_conv_grad_op",
+    name = "depthwise_conv_grad_ops",
     hdrs = [
         "depthwise_conv_op.h",
+        "depthwise_conv_op_3d.h",
     ],
-    prefix = "depthwise_conv_grad_op",
+    prefix = "depthwise_conv_grad_ops",
     deps = [
         ":bounds_check",
         ":ops_util",
@@ -3205,20 +3206,6 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:nn_ops_op_lib",
     ],
-)
-
-tf_kernel_library(
-    name = "depthwise_conv_op_3d",
-    prefix = "depthwise_conv3d_op_3d",
-    deps = [
-        ":bounds_check",
-        ":conv_ops",
-        ":ops_util",
-        "//tensorflow/core:core_cpu",
-        "//tensorflow/core:framework",
-        "//tensorflow/core:lib",
-        "//tensorflow/core:nn_ops_op_lib",
-    ]
 )
 
 cc_library(
@@ -3228,9 +3215,8 @@ cc_library(
         ":bias_op",
         ":conv_ops",
         ":data_format_ops",
-        ":depthwise_conv_grad_op",
-        ":depthwise_conv_op",
-        ":depthwise_conv_op_3d",
+        ":depthwise_conv_grad_ops",
+        ":depthwise_conv_ops",
         ":dilation_ops",
         ":fused_batch_norm_op",
         ":in_topk_op",
@@ -4741,9 +4727,11 @@ filegroup(
         "control_flow_ops.h",
         "conv_2d.h",
         "conv_ops.h",
+        "conv_ops_3d.h",
         "data_format_ops.h",
         "depthtospace_op.h",
         "depthwise_conv_op.h",
+        "depthwise_conv_op_3d.h",
         "fake_quant_ops_functor.h",
         "fused_batch_norm_op.h",
         "gemm_functors.h",
@@ -4860,6 +4848,7 @@ filegroup(
         "deep_conv2d.cc",
         "deep_conv2d.h",
         "depthwise_conv_op.cc",
+        "depthwise_conv_op_3d.cc",
         "dynamic_partition_op.cc",
         "encode_wav_op.cc",
         "fake_quant_ops.cc",

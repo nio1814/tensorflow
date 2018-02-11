@@ -16,6 +16,7 @@ limitations under the License.
 #define USE_EIGEN_TENSOR
 #define EIGEN_USE_THREADS
 
+#include "tensorflow/core/kernels/conv_ops_3d.h"
 #include "tensorflow/core/kernels/conv_2d.h"
 #include "tensorflow/core/kernels/conv_3d.h"
 
@@ -41,9 +42,6 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
-
-template <typename Device, typename T>
-struct LaunchConvOp;
 
 template <typename T>
 struct LaunchConvOp<CPUDevice, T> {
@@ -149,6 +147,9 @@ TF_CALL_half(REGISTER_CPU_KERNEL);
 TF_CALL_float(REGISTER_CPU_KERNEL);
 TF_CALL_double(REGISTER_CPU_KERNEL);
 #undef REGISTER_CPU_KERNEL
+
+// To be used inside depthwise_conv_op_3d.cc.
+template struct LaunchConvOp<CPUDevice, float>;
 
 #if GOOGLE_CUDA
 
