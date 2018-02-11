@@ -41,6 +41,13 @@ limitations under the License.
 
 namespace tensorflow {
 
+// In depthwise convolution, one input is convolved into depth_multipler
+// outputs and the outputs don't need to be reduced again like what regular
+// convolution does.
+//  However, the way to apply filters to inputs is exactly the same as the
+// regular convolution. Please refer to the regular convolution kernels for
+// more details.
+
 typedef Eigen::ThreadPoolDevice CPUDevice;
 
 template <typename Device, typename T>
@@ -48,11 +55,11 @@ class DepthwiseConv3dNativeOp: public BinaryOp<T> {
  public:
   explicit DepthwiseConv3dNativeOp(OpKernelConstruction* context)
       : BinaryOp<T>(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &strides_));
     string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
                 errors::InvalidArgument("Invalid data format"));
-    OP_REQUIRES_OK(context, context->GetAttr("strides", &strides_));
     OP_REQUIRES(context, strides_.size() == 5,
                 errors::InvalidArgument("Sliding window strides field must "
                                         "specify 5 dimensions"));
@@ -93,10 +100,10 @@ class DepthwiseConv3dNativeOp: public BinaryOp<T> {
 
     // in_depth for input and filter must match.
     const int64 in_depth = GetTensorDim(input, data_format_, 'C');
-    OP_REQUIRES(
-        context, in_depth == filter.dim_size(3),
-        errors::InvalidArgument("input and filter must have the same channels: ",
-                                in_depth, " vs ", filter.dim_size(3)));
+    OP_REQUIRES(context, in_depth == filter.dim_size(3),
+                errors::InvalidArgument(
+                    "input and filter must have the same channels: ", in_depth,
+                    " vs ", filter.dim_size(3)));
 
     // The last dimension for filter is depth multiplier.
     const int32 depth_multiplier = filter.dim_size(4);
@@ -129,7 +136,9 @@ class DepthwiseConv3dNativeOp: public BinaryOp<T> {
     OP_REQUIRES_OK(context, context->allocate_output(0, out_shape, &output));
 
     // If there is nothing to compute, return.
-    if (out_shape.num_elements() == 0) return;
+    if (out_shape.num_elements() == 0) {
+      return;
+    }
 
   }
 

@@ -607,11 +607,13 @@ static void BM_ConvFloatDepthwise(int iters, int batch, int rows, int cols,
 // BS: batch_size
 // R: tensor_in_rows
 // C: tensor_in_cols
+// P: tensor_in_planes
 // ID: input_depth
 // DM: depth_multiplier
 // OD: output_depth
 // KR: kernel_rows
 // KC: kernel_cols
+// KP: kernel_planes
 // STR: stride
 // PAD: padding
 
@@ -726,6 +728,146 @@ BM_ConvFloatDepthwiseBk(32, 112, 112, 3, 8, 24, 3, 3, 1, SAME, conv11);
 BM_ConvFloatDepthwiseBk(32, 112, 112, 8, 3, 24, 3, 3, 1, SAME, conv12);
 BM_ConvFloatDepthwiseBk(32, 112, 112, 12, 2, 24, 3, 3, 1, SAME, conv13);
 BM_ConvFloatDepthwiseBk(32, 112, 112, 24, 1, 24, 3, 3, 1, SAME, conv14);
+
+static void BM_Conv3dFloatDepthwise(int iters, int batch, int rows, int cols, int planes,
+                                  int in_depth, int depth_multiplier,
+                                  int out_depth, int filter_rows, int filter_cols, int filter_planes,
+																	DEPTHWISE_CONV_OP op,
+                                  int num_threads, int stride, Padding padding,
+                                  bool use_gpu, const string& label) {
+  if (!IsGoogleCudaEnabled() && use_gpu) {
+    testing::SetLabel(
+        strings::StrCat("Skipping GPU test (no --config=cuda): ", label));
+    return;
+  }
+  testing::SetLabel(label);
+
+  // Set the number of threads
+  SessionOptions options;
+  options.config.set_intra_op_parallelism_threads(num_threads);
+
+  // We set up a graph for computing convolution.
+  GraphDef graph;
+
+  // For this, we need an input tensor and a filter tensor.
+  // Compute the output size.
+  int64 out_rows = 0, out_cols = 0, out_planes = 0, pad_rows = 0, pad_cols = 0, pad_planes = 0;
+  TF_CHECK_OK(GetWindowedOutputSize(rows, filter_rows, stride, padding,
+                                    &out_rows, &pad_rows));
+  TF_CHECK_OK(GetWindowedOutputSize(cols, filter_cols, stride, padding,
+                                    &out_cols, &pad_cols));
+  TF_CHECK_OK(GetWindowedOutputSize(planes, filter_planes, stride, padding,
+                                    &out_planes, &pad_planes));
+
+  int64 num_ops = 0;
+  if (op == DEPTHWISE_CONV_OP_FWD) {
+    // Counting the number of floating point operations (both MUL and ADD)
+    // Forward computation:
+    // BATCH x OUT_ROW X OUT_COL X FLTR_ROW X FLTR_COL X DEPTH_MULT X IN_DEPTH
+    // We multiply by two since there are multiplications and additions.
+    num_ops = static_cast<int64>(batch * out_rows * out_cols * out_planes) *
+              static_cast<int64>(filter_rows * filter_cols * filter_planes) *
+              static_cast<int64>(in_depth * depth_multiplier) * 2;
+  } else {
+    // Backward computation: both input and filter backprop take the same
+    // amount of computation:
+    // BATCH x IN_ROW X IN_COL X FLTR_ROW X FLTR_COL X DEPTH_MULT X IN_DEPTH
+    // We multiply by two since there are multiplications and additions.
+    // We divide by stride squared to approximate the affect of decreasing
+    // number of bprop output points per bprop input point with increasing
+    // stride.
+    num_ops = (static_cast<int64>(batch * rows * cols * planes) *
+               static_cast<int64>(filter_rows * filter_cols * filter_planes) *
+               static_cast<int64>(in_depth * depth_multiplier) * 2) /
+              (stride * stride * stride);
+  }
+
+  // FIXME
+  SetConstOp("input", {batch, rows, cols, planes, in_depth}, DT_FLOAT,
+             graph.add_node());
+  SetConstOp("depthwise_filter",
+             {filter_rows, filter_cols, filter_planes, in_depth, depth_multiplier}, DT_FLOAT,
+             graph.add_node());
+  SetConstOp("output_backprop", {batch, out_rows, out_cols, out_planes, out_depth},
+             DT_FLOAT, graph.add_node());
+  SetConstSizesOp("input_sizes",
+                  std::vector<int32>({batch, rows, cols, planes, in_depth}),
+                  graph.add_node());
+  SetConstSizesOp("filter_sizes",
+                  std::vector<int32>(
+                      {filter_rows, filter_cols, filter_planes, in_depth, depth_multiplier}),
+                  graph.add_node());
+
+  // Now add the convolution op
+  NodeDef* conv = graph.add_node();
+  switch (op) {
+    case DEPTHWISE_CONV_OP_FWD:
+      TF_CHECK_OK(NodeDefBuilder("depthwise_conv3d", "DepthwiseConv3dNative")
+                      .Input("input", 0, DT_FLOAT)
+                      .Input("depthwise_filter", 0, DT_FLOAT)
+                      .Attr("strides", {1, stride, stride, stride, 1})
+                      .Attr("padding", padding == VALID ? "VALID" : "SAME")
+                      .Finalize(conv));
+      break;
+    case DEPTHWISE_CONV_OP_BACKPROP_INPUT:
+      TF_CHECK_OK(NodeDefBuilder("depthwise_conv3d_backprop_input",
+                                 "DepthwiseConv3dNativeBackpropInput")
+                      .Input("input_sizes", 0, DT_INT32)
+                      .Input("depthwise_filter", 0, DT_FLOAT)
+                      .Input("output_backprop", 0, DT_FLOAT)
+                      .Attr("strides", {1, stride, stride, stride, 1})
+                      .Attr("padding", padding == VALID ? "VALID" : "SAME")
+                      .Finalize(conv));
+      break;
+    case DEPTHWISE_CONV_OP_BACKPROP_FILTER:
+      TF_CHECK_OK(NodeDefBuilder("depthwise_conv3d_backprop_filter",
+                                 "DepthwiseConv3dNativeBackpropFilter")
+                      .Input("input", 0, DT_FLOAT)
+                      .Input("filter_sizes", 0, DT_INT32)
+                      .Input("output_backprop", 0, DT_FLOAT)
+                      .Attr("strides", {1, stride, stride, stride, 1})
+                      .Attr("padding", padding == VALID ? "VALID" : "SAME")
+                      .Finalize(conv));
+      break;
+  }
+  Graph* g = new Graph(OpRegistry::Global());
+  GraphConstructorOptions opts;
+  TF_CHECK_OK(ConvertGraphDefToGraph(opts, graph, g));
+
+  string device = use_gpu ? "gpu" : "cpu";
+  testing::UseRealTime();
+  test::Benchmark(device, g, &options).Run(iters);
+  testing::ItemsProcessed(num_ops * iters);
+}
+
+#define BM_Conv3dFloatDepthwiseFwd(BS, R, C, P, ID, DM, OD, KR, KC, KP, STR, PAD,    \
+                                 LABEL)                                     \
+  static void BM_Conv3dFloatDepthwiseFwdCPU1_##LABEL(int iters) {             \
+    BM_Conv3dFloatDepthwise(                                                  \
+        iters, BS, R, C, P, ID, DM, OD, KR, KC, KP, DEPTHWISE_CONV_OP_FWD, 1, STR, \
+        PAD, false,                                                         \
+        strings::StrCat(BS, "_", R, "_", C, "_", P, "_", ID, "_", DM, "_", OD, "_", \
+                        KR, "_", KC, "_", KP, "_", STR, "_", PAD, "_cpu1"));         \
+  }                                                                         \
+  static void BM_Conv3dFloatDepthwiseFwdCPU4_##LABEL(int iters) {             \
+    BM_Conv3dFloatDepthwise(                                                  \
+        iters, BS, R, C, P, ID, DM, OD, KR, KC, KP, DEPTHWISE_CONV_OP_FWD, 4, STR, \
+        PAD, false,                                                         \
+        strings::StrCat(BS, "_", R, "_", C, "_", P, "_", ID, "_", DM, "_", OD, "_", \
+                        KR, "_", KC, "_", KP, "_", STR, "_", PAD, "_cpu4"));         \
+  }                                                                         \
+  static void BM_Conv3dFloatDepthwiseFwdGPU_##LABEL(int iters) {              \
+    BM_Conv3dFloatDepthwise(                                                  \
+        iters, BS, R, C, P, ID, DM, OD, KR, KC, KP, DEPTHWISE_CONV_OP_FWD, 1, STR, \
+        PAD, true,                                                          \
+        strings::StrCat(BS, "_", R, "_", C, "_", P, "_", ID, "_", DM, "_", OD, "_", \
+                        KR, "_", KC, "_", KP, "_", STR, "_", PAD, "_gpu"));          \
+  }                                                                         \
+  BENCHMARK(BM_Conv3dFloatDepthwiseFwdCPU1_##LABEL);                          \
+  BENCHMARK(BM_Conv3dFloatDepthwiseFwdCPU4_##LABEL);                          \
+  BENCHMARK(BM_Conv3dFloatDepthwiseFwdGPU_##LABEL);
+
+BM_Conv3dFloatDepthwiseFwd(32, 112, 112, 16, 3, 8, 24, 3, 3, 3, 1, SAME, conv0);
 
 static void BM_LRNFloat(int iters, int depth, int cols, int rows,
                         int batch_size, int range, int num_threads,
