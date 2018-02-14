@@ -62,6 +62,18 @@ struct Depthwise3DArgs {
         out_cols(0),
         out_planes(0),
         out_depth(0) {}
+
+  int64 input_image_size() const {
+    return in_rows * in_cols * in_planes * in_depth;
+  }
+
+  int64 output_image_size() const {
+    return out_rows * out_cols * out_planes * out_depth;
+  }
+
+  int64 filter_spatial_size() const {
+    return filter_rows * filter_cols * filter_planes;
+  }
 };
 
 class OpKernelContext;
@@ -73,6 +85,12 @@ struct LaunchDepthwiseConv3dOp {
                   TensorFormat data_format);
 };
 
+template <typename Device, typename T>
+struct LaunchDepthwiseConv3dBackpropInputOp {
+  void operator()(OpKernelContext* ctx, const Depthwise3DArgs& args,
+                  const T* out_backprop, const T* filter, T* in_backprop,
+                  TensorFormat data_format);
+};
 namespace functor {
 template <typename T>
 struct DepthwiseFilterPadOp {

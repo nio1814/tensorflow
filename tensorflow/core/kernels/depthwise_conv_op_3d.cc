@@ -309,6 +309,7 @@ class DepthwiseConv3dNativeOp: public BinaryOp<T> {
 TF_CALL_float(REGISTER_CPU_KERNEL);
 #if !defined(PLATFORM_WINDOWS) || !defined(_DEBUG)
 TF_CALL_double(REGISTER_CPU_KERNEL);
+
 #endif
 
 } // namespace tensorflow
