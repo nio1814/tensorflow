@@ -59,11 +59,12 @@ struct DepthwiseConv3DKernel {
     static const int64 kPacketSize = (sizeof(Packet) / sizeof(T));
 
     const int64 out_depth = args.out_depth;
-    const int64 filter_spatial_size = args.filter_rows * args.filter_cols * args.filter_planes;
+//    const int64 filter_spatial_size = args.filter_rows * args.filter_cols * args.filter_planes;
+    const int64 filter_spatial_size = args.filter_spatial_size();
     const int64 output_scalar_size = out_depth % kPacketSize;
     const int64 output_vectorized_size =
         (out_depth / kPacketSize) * kPacketSize;
-    const int64 base_output_index = (out_r * args.out_cols + out_c) * out_depth;
+    const int64 base_output_index = ((out_r * args.out_cols + out_c) * args.out_planes + out_p) * out_depth;
 
     for (int i = 0; i < output_vectorized_size; i += kPacketSize) {
       // Reset accumulator.
@@ -144,15 +145,18 @@ struct LaunchDepthwiseConv3dOp<CPUDevice, T> {
     const T* filter_data =
         pad_filter ? padded_filter.template flat<T>().data() : depthwise_filter;
 
-    // Computes one shard of depthwise conv2d output.
+    // Computes one shard of depthwise conv3d output.
     auto shard = [&ctx, &args, &input, &filter_data, &output, data_format](
                      int64 start, int64 limit) {
       static const int64 kPacketSize = (sizeof(Packet) / sizeof(T));
-      const int64 input_image_size =
-          args.in_rows * args.in_cols * args.in_planes * args.in_depth;
-      const int64 output_image_size =
-          args.out_rows * args.out_cols * args.out_planes * args.out_depth;
-      const int64 filter_spatial_size = args.filter_rows * args.filter_cols * args.filter_planes;
+//      const int64 input_image_size =
+//          args.in_rows * args.in_cols * args.in_planes * args.in_depth;
+      const int64 input_image_size = args.input_image_size();
+//      const int64 output_image_size =
+//          args.out_rows * args.out_cols * args.out_planes * args.out_depth;
+      const int64 output_image_size = args.output_image_size();
+//      const int64 filter_spatial_size = args.filter_rows * args.filter_cols * args.filter_planes;
+      const int64 filter_spatial_size = args.filter_spatial_size();
       const int64 padded_filter_inner_dim_size =
           ((args.out_depth + kPacketSize - 1) / kPacketSize) * kPacketSize;
 
@@ -166,29 +170,28 @@ struct LaunchDepthwiseConv3dOp<CPUDevice, T> {
       T* input_buffer_data = input_buffer.template flat<T>().data();
 
       for (int64 i = start; i < limit; ++i) {
-        const int64 b = i / args.out_rows;
-        const int64 in_base = b * input_image_size;
-        const int64 out_base = b * output_image_size;
+        const int64 batch_index = i / (args.out_rows * args.out_cols);
+        const int64 in_base = batch_index * input_image_size;
+        const int64 out_base = batch_index * output_image_size;
 
-        const int64 out_r = i % args.out_rows;
+        const int64 out_c = i % args.out_cols;
+        const int64 out_r = (i/args.out_cols) % args.out_rows;
 
-        for (int64 out_c = 0; out_c < args.out_cols; ++out_c) {
-          for (int64 out_p = 0; out_p < args.out_planes; ++out_p){
-            // Populate 'input_buffer_data' with data from local input region.
-            functor::DepthwiseInputCopyOp<T>()(args, padded_filter_inner_dim_size,
-                                               out_r, out_c, out_p, input + in_base,
-                                               input_buffer_data);
+        for (int64 out_p = 0; out_p < args.out_planes; ++out_p){
+          // Populate 'input_buffer_data' with data from local input region.
+          functor::DepthwiseInputCopyOp3d<T>()(args, padded_filter_inner_dim_size,
+                                             out_r, out_c, out_p, input + in_base,
+                                             input_buffer_data);
 
-            // Process buffered input across all filters and store to output.
-            DepthwiseConv3DKernel<T>::Run(
-                  args, padded_filter_inner_dim_size, out_r, out_c, out_p, filter_data,
-                  input_buffer_data, output + out_base, data_format);
-          }
+          // Process buffered input across all filters and store to output.
+          DepthwiseConv3DKernel<T>::Run(
+                args, padded_filter_inner_dim_size, out_r, out_c, out_p, filter_data,
+                input_buffer_data, output + out_base, data_format);
         }
       }
     };
 
-    const int64 total_shards = args.batch * args.out_rows;
+    const int64 total_shards = args.batch * args.out_rows * args.out_cols;
 
     // Empirically tested to give reasonable performance boosts at batch size 1
     // without reducing throughput at batch size 32.
@@ -196,7 +199,7 @@ struct LaunchDepthwiseConv3dOp<CPUDevice, T> {
 
     // TODO(andydavis): Estimate shard cost (in cycles) based on the number of
     // flops/loads/stores required to compute one shard.
-    const int64 shard_cost = kCostMultiplier * args.out_cols * args.out_depth;
+    const int64 shard_cost = kCostMultiplier * args.out_planes * args.out_depth;
 
     auto worker_threads = *(ctx->device()->tensorflow_cpu_worker_threads());
     Shard(worker_threads.num_threads, worker_threads.workers, total_shards,
@@ -299,6 +302,10 @@ class DepthwiseConv3dNativeOp: public BinaryOp<T> {
   std::vector<int32> strides_;
   Padding padding_;
   TensorFormat data_format_;
+
+  LaunchConvOp<Device, T> launcher_;
+
+  TF_DISALLOW_COPY_AND_ASSIGN(DepthwiseConv3dNativeOp);
 };
 
 #define REGISTER_CPU_KERNEL(T)                                                 \
@@ -306,10 +313,10 @@ class DepthwiseConv3dNativeOp: public BinaryOp<T> {
       Name("DepthwiseConv3dNative").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
       DepthwiseConv3dNativeOp<CPUDevice, T>);
 
+TF_CALL_half(REGISTER_CPU_KERNEL);
 TF_CALL_float(REGISTER_CPU_KERNEL);
 #if !defined(PLATFORM_WINDOWS) || !defined(_DEBUG)
 TF_CALL_double(REGISTER_CPU_KERNEL);
-
 #endif
 
 } // namespace tensorflow

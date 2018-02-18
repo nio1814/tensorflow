@@ -130,11 +130,12 @@ struct DepthwiseFilterPadOp {
     }
   }
 };
+
 template <typename T>
-struct DepthwiseInputCopyOp {
+struct DepthwiseInputCopyOp3d {
   void operator()(const Depthwise3DArgs& args,
                   const int64 padded_filter_inner_dim_size, const int64 out_r,
-                  const int64 out_c, const T* input, T* input_buffer) {
+                  const int64 out_c, const int64 out_p, const T* input, T* input_buffer) {
     typedef typename Eigen::internal::packet_traits<T>::type Packet;
     static const int64 kPacketSize = (sizeof(Packet) / sizeof(T));
 
@@ -157,12 +158,13 @@ struct DepthwiseInputCopyOp {
 
     const int64 replicated_packet_size = kPacketSize * args.depth_multiplier;
 
-    // Iterate through all rows x cols reading 'in_depth' from 'input' and
+    // Iterate through all rows x cols x planes reading 'in_depth' from 'input' and
     // replicating by 'depth_multiplier' into 'input_buffer' (otherwise
     // zero-padding input buffer as needed).
     auto* in_buf = input_buffer;
     const int64 in_r_start = out_r * args.stride - args.pad_rows;
     const int64 in_c_start = out_c * args.stride - args.pad_cols;
+    const int64 in_p_start = out_p * args.stride - args.pad_planes;
 
     for (int64 f_r = 0; f_r < args.filter_rows; ++f_r) {
       const int64 in_r = in_r_start + f_r;
@@ -170,54 +172,59 @@ struct DepthwiseInputCopyOp {
       for (int64 f_c = 0; f_c < args.filter_cols; ++f_c) {
         const int64 in_c = in_c_start + f_c;
 
-        if (in_r >= 0 && in_r < args.in_rows && in_c >= 0 &&
-            in_c < args.in_cols) {
-          auto* in = input + (in_r * args.in_cols + in_c) * args.in_depth;
-          // Copy vectorized portion of inner dimension.
-          for (int64 d = 0; d < input_vectorized_size; d += kPacketSize) {
-            auto v = Eigen::internal::ploadu<Packet>(in + d);
-            for (int dm = 0; dm < args.depth_multiplier; ++dm) {
-              Eigen::internal::pscatter<T, Packet>(in_buf + dm, v,
-                                                   args.depth_multiplier);
-            }
-            in_buf += replicated_packet_size;
-          }
+        for (int64 f_p = 0; f_p < args.filter_planes; ++f_p) {
+          const int64 in_p = in_p_start + f_p;
 
-          // Copy scalar portion of inner dimension.
-          for (int64 d = 0; d < input_scalar_size; ++d) {
-            T v = in[input_vectorized_size + d];
-            const int64 base = d * args.depth_multiplier;
-            if (dm_vectorized_size > 0) {
-              // Copy vectorized portion of replicated output.
-              // This branch is only taken if 'args.depth_multiplier' is
-              // vectorizable (i.e. args.depth_multiplier >= register width).
-              auto p = Eigen::internal::pset1<Packet>(v);
-              for (int64 dm = 0; dm < dm_vectorized_size; dm += kPacketSize) {
-                Eigen::internal::pstoreu<T>(in_buf + base + dm, p);
-              }
-              // Copy scalar portion of replicated output.
-              for (int64 dm = 0; dm < dm_scalar_size; ++dm) {
-                in_buf[base + dm_vectorized_size + dm] = v;
-              }
-            } else {
-              // Depth multiplier is less than one packet: scalar copy.
+          if (in_r >= 0 && in_r < args.in_rows &&
+              in_c >= 0 && in_c < args.in_cols &&
+              in_p >= 0 && in_p < args.in_planes) {
+            auto* in = input + ((in_r * args.in_cols + in_c) * args.in_planes + in_p) * args.in_depth;
+            // Copy vectorized portion of inner dimension.
+            for (int64 d = 0; d < input_vectorized_size; d += kPacketSize) {
+              auto v = Eigen::internal::ploadu<Packet>(in + d);
               for (int dm = 0; dm < args.depth_multiplier; ++dm) {
-                in_buf[base + dm] = v;
+                Eigen::internal::pscatter<T, Packet>(in_buf + dm, v,
+                                                     args.depth_multiplier);
+              }
+              in_buf += replicated_packet_size;
+            }
+
+            // Copy scalar portion of inner dimension.
+            for (int64 d = 0; d < input_scalar_size; ++d) {
+              T v = in[input_vectorized_size + d];
+              const int64 base = d * args.depth_multiplier;
+              if (dm_vectorized_size > 0) {
+                // Copy vectorized portion of replicated output.
+                // This branch is only taken if 'args.depth_multiplier' is
+                // vectorizable (i.e. args.depth_multiplier >= register width).
+                auto p = Eigen::internal::pset1<Packet>(v);
+                for (int64 dm = 0; dm < dm_vectorized_size; dm += kPacketSize) {
+                  Eigen::internal::pstoreu<T>(in_buf + base + dm, p);
+                }
+                // Copy scalar portion of replicated output.
+                for (int64 dm = 0; dm < dm_scalar_size; ++dm) {
+                  in_buf[base + dm_vectorized_size + dm] = v;
+                }
+              } else {
+                // Depth multiplier is less than one packet: scalar copy.
+                for (int dm = 0; dm < args.depth_multiplier; ++dm) {
+                  in_buf[base + dm] = v;
+                }
               }
             }
-          }
-          in_buf += input_scalar_size * args.depth_multiplier;
+            in_buf += input_scalar_size * args.depth_multiplier;
 
-          // Pad the remainder of the output to vector register boundary.
-          for (int64 d = 0; d < output_pad_size; ++d) {
-            in_buf[d] = static_cast<T>(0);
-          }
-          in_buf += output_pad_size;
+            // Pad the remainder of the output to vector register boundary.
+            for (int64 d = 0; d < output_pad_size; ++d) {
+              in_buf[d] = static_cast<T>(0);
+            }
+            in_buf += output_pad_size;
 
-        } else {
-          // Zero pad.
-          memset(in_buf, 0, sizeof(T) * padded_filter_inner_dim_size);
-          in_buf += padded_filter_inner_dim_size;
+          } else {
+            // Zero pad.
+            memset(in_buf, 0, sizeof(T) * padded_filter_inner_dim_size);
+            in_buf += padded_filter_inner_dim_size;
+          }
         }
       }
     }

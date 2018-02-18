@@ -804,10 +804,12 @@ struct LaunchDepthwiseConvBackpropFilterOp<CPUDevice, T> {
                    &input_buffer));
       T* input_buffer_data = input_buffer.template flat<T>().data();
 
-      const int64 input_image_size =
-          args.in_rows * args.in_cols * args.in_depth;
-      const int64 output_image_size =
-          args.out_rows * args.out_cols * args.out_depth;
+//      const int64 input_image_size =
+//          args.in_rows * args.in_cols * args.in_depth;
+      const int64 input_image_size = args.input_image_size();
+//      const int64 output_image_size =
+//          args.out_rows * args.out_cols * args.out_depth;
+      const int64 output_image_size = args.output_image_size();
       const int64 padded_filter_size =
           filter_spatial_size * padded_out_depth_size;
 
@@ -818,19 +820,22 @@ struct LaunchDepthwiseConvBackpropFilterOp<CPUDevice, T> {
 
         for (int out_r = 0; out_r < args.out_rows; ++out_r) {
           for (int out_c = 0; out_c < args.out_cols; ++out_c) {
-            // Populate 'input_buffer_data' with data from local input region.
-            functor::DepthwiseInputCopyOp<T>()(
-                args, padded_out_depth_size, out_r, out_c,
-                input + b * input_image_size, input_buffer_data);
-            // Compute depthwise backprop filter.
-            ComputeBackpropFilter(args, padded_out_depth_size, out_r, out_c,
-                                  out_backprop + b * output_image_size,
-                                  input_buffer_data, output_buffer);
+            for (int out_p = 0; out_p < args.out_planes; ++out_p) {
+              // Populate 'input_buffer_data' with data from local input region.
+              functor::DepthwiseInputCopyOp3d<T>()(
+                  args, padded_out_depth_size, out_r, out_c, out_p,
+                  input + b * input_image_size, input_buffer_data);
+              // Compute depthwise backprop filter.
+              ComputeBackpropFilter(args, padded_out_depth_size, out_r, out_c,
+                                    out_backprop + b * output_image_size,
+                                    input_buffer_data, output_buffer);
+            }
           }
         }
       }
     };
-    const int64 shard_cost = args.out_rows * args.out_cols * args.out_depth;
+//    const int64 shard_cost = args.out_rows * args.out_cols * args.out_depth;
+    const int64 shard_cost = args.output_image_size();
     auto worker_threads = *(ctx->device()->tensorflow_cpu_worker_threads());
     Shard(worker_threads.num_threads, worker_threads.workers, args.batch,
           shard_cost, shard);
