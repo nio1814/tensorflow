@@ -237,7 +237,7 @@ TEST_F(ConvSpatialSeparable3DOpTest, Small) {
   int batch_size = 10;
   Tensor image = tensorflow::CreateImage(batch_size, 1, 4, 3, 2);
   std::array<Tensor,3> filters = tensorflow::CreateFilters(3, 1, 1);
-  std::vector<float> output_values_1 = {1800, 2768, 3008, 2036, 3045, 4638, 4971, 3339, 2132, 3224, 3428, 2288, 1116, 1688, 1820, 1208, 1803, 2694, 2865, 1881, 1160, 1712, 1808, 1172};
+  std::vector<float> output_values_1 = {37800, 48330, 52380, 26865, 57240, 72252, 77112, 39366, 31320, 39366, 41796, 21303, 24300, 30942, 33372, 17091, 36288, 45684, 48600, 24786, 19764, 24786, 26244, 13365};
   std::vector<float> output_values;
   for (int b=0; b<batch_size; b++) {
     output_values.insert(output_values.end(), output_values_1.begin(), output_values_1.end());

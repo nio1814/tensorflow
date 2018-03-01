@@ -31,6 +31,7 @@ limitations under the License.
 #include "tensorflow/core/util/padding.h"
 #include "tensorflow/core/util/tensor_format.h"
 #include "tensorflow/core/util/use_cudnn.h"
+#include "tensorflow/core/kernels/conv_ops_3d.h"
 
 #if GOOGLE_CUDA
 #include "tensorflow/core/platform/stream_executor.h"
@@ -39,28 +40,27 @@ using perftools::gputools::dnn::DimIndex;
 
 namespace tensorflow {
 
-typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
 
-template <typename Device, typename T>
-struct LaunchConvOp;
+//template <typename Device, typename T>
+//struct LaunchConvOp;
 
-template <typename T>
-struct LaunchConvOp<CPUDevice, T> {
-  static void launch(OpKernelContext* context, bool cudnn_use_autotune,
-                     const Tensor& input, const Tensor& filter,
-                     const std::array<int64, 3>& strides, const Padding padding,
-                     TensorFormat data_format, Tensor* output) {
-    OP_REQUIRES(context, data_format == FORMAT_NHWC,
-                errors::InvalidArgument("CPU implementation of Conv3D "
-                                        "currently only supports the NHWC "
-                                        "tensor format."));
-    functor::CuboidConvolution<CPUDevice, T>()(
-        context->eigen_device<CPUDevice>(), output->tensor<T, 5>(),
-        input.tensor<T, 5>(), filter.tensor<T, 5>(), strides[2], strides[1],
-        strides[0], BrainPadding2EigenPadding(padding));
-  }
-};
+//template <typename T>
+//struct LaunchConvOp<CPUDevice, T> {
+//  static void launch(OpKernelContext* context, bool cudnn_use_autotune,
+//                     const Tensor& input, const Tensor& filter,
+//                     const std::array<int64, 3>& strides, const Padding padding,
+//                     TensorFormat data_format, Tensor* output) {
+//    OP_REQUIRES(context, data_format == FORMAT_NHWC,
+//                errors::InvalidArgument("CPU implementation of Conv3D "
+//                                        "currently only supports the NHWC "
+//                                        "tensor format."));
+//    functor::CuboidConvolution<CPUDevice, T>()(
+//        context->eigen_device<CPUDevice>(), output->tensor<T, 5>(),
+//        input.tensor<T, 5>(), filter.tensor<T, 5>(), strides[2], strides[1],
+//        strides[0], BrainPadding2EigenPadding(padding));
+//  }
+//};
 
 template <typename Device, typename T>
 class Conv3DOp : public BinaryOp<T> {
