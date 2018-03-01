@@ -580,6 +580,18 @@ REGISTER_OP("Conv3DBackpropFilterV2")
       return Status::OK();
     });
 
+REGISTER_OP("ConvSpatialSeparable3D")
+    .Input("input: T")
+    .Input("planes_filter: T")
+    .Input("rows_filter: T")
+    .Input("cols_filter: T")
+    .Output("output: T")
+    .Attr("T: {half, bfloat16, float, double}")
+    .Attr("strides: list(int) >= 5")
+    .Attr(GetPaddingAttrString())
+    .Attr(GetConvnet3dDataFormatAttrString())
+    .Attr("dilations: list(int) = [1, 1, 1, 1, 1]")
+    .SetShapeFn(shape_inference::Conv3DShape);
 // --------------------------------------------------------------------------
 
 REGISTER_OP("AvgPool3D")

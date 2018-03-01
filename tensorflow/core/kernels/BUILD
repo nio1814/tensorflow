@@ -3147,6 +3147,7 @@ tf_kernel_library(
         "conv_grad_ops.cc",
         "conv_grad_ops_3d.cc",
         "deep_conv2d.cc",
+        "spatial_separable_conv_op_3d.cc",
     ] + select({
         ":xsmm": ["xsmm_conv2d.cc"],
         "//conditions:default": [],

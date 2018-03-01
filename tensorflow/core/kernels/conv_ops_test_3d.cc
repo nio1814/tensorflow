@@ -100,6 +100,33 @@ protected:
   }
 };
 
+class ConvSpatialSeparable3DOpTest : public OpsTestBase
+{
+protected:
+  void HandwrittenConv(const Tensor& image, const Tensor& filter_planes, const Tensor& filter_rows, const Tensor& filter_cols, int stride, const Tensor& expected) {
+    TF_EXPECT_OK(NodeDefBuilder("conv3d", "ConvSpatialSeparable3D")
+                     .Input(FakeInput(DT_FLOAT))
+                     .Input(FakeInput(DT_FLOAT))
+                     .Input(FakeInput(DT_FLOAT))
+                     .Input(FakeInput(DT_FLOAT))
+                     .Attr("T", DT_FLOAT)
+                     .Attr("strides", {1, stride, stride, stride, 1})
+                     .Attr("padding", "SAME")
+//                     .Attr("dilations", {1,1,1,1})
+                     .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp());
+
+    AddInputFromArray<float>(image.shape(), image.flat<float>());
+    AddInputFromArray<float>(filter_planes.shape(), filter_planes.flat<float>());
+    AddInputFromArray<float>(filter_rows.shape(), filter_rows.flat<float>());
+    AddInputFromArray<float>(filter_cols.shape(), filter_cols.flat<float>());
+    TF_ASSERT_OK(RunOpKernel());
+
+    const Tensor& output = *GetOutput(0);
+    test::ExpectTensorNear<float>(expected, output, 1e-5);
+  }
+};
+
 //static void Convolution3dFloat(int batch_size, std::array<int,4> input_shape, std::array<int64,4> filter_shape, int stride, Padding padding) {
 //  tensorflow::SessionOptions session_options;
 //  session_options.config.set_inter_op_parallelism_threads(1);
@@ -134,12 +161,12 @@ namespace tensorflow {
 Tensor CreateImage(int batch_size, int image_channels, int image_cols, int image_rows, int image_planes) {
   Tensor image(DT_FLOAT, {batch_size, image_planes, image_rows, image_cols,
                           image_channels});
-  std::vector<float> initialValues;
+  std::vector<float> initial_values;
   int image_size = image_planes*image_rows*image_cols;
   for (int n = 0; n<image.NumElements(); n++) {
-    initialValues.push_back(n%image_size + 1);
+    initial_values.push_back(n%image_size + 1);
   }
-  test::FillValues<float>(&image, initialValues);
+  test::FillValues<float>(&image, initial_values);
 
   return image;
 }
@@ -147,13 +174,34 @@ Tensor CreateImage(int batch_size, int image_channels, int image_cols, int image
 Tensor CreateFilter(int filter_size, int image_channels, int filter_channels) {
   Tensor filter(DT_FLOAT, {filter_size, filter_size, filter_size, image_channels, filter_channels});
 
-  std::vector<float> initialValues;
+  std::vector<float> initial_values;
   for (int n=0; n<filter.NumElements(); n++) {
-    initialValues.push_back(n+1);
+    initial_values.push_back(n+1);
   }
-  test::FillValues<float>(&filter, initialValues);
+  test::FillValues<float>(&filter, initial_values);
 
   return filter;
+}
+
+std::array<Tensor,3> CreateFilters(int filter_size, int image_channels, int filter_channels) {
+  Tensor planes_filter(DT_FLOAT, {filter_size, 1, 1, image_channels, filter_channels});
+  Tensor rows_filter(DT_FLOAT, {1, filter_size, 1, image_channels, filter_channels});
+  Tensor cols_filter(DT_FLOAT, {1, 1, filter_size, image_channels, filter_channels});
+
+  std::vector<float> initial_values_planes;
+  std::vector<float> initial_values_rows;
+  std::vector<float> initial_values_cols;
+  for (int n=0; n<filter_size*image_channels; n++) {
+    int index = n+1;
+    initial_values_planes.push_back(index*filter_size*filter_size);
+    initial_values_rows.push_back(index*filter_size);
+    initial_values_cols.push_back(index);
+  }
+  test::FillValues<float>(&planes_filter, initial_values_planes);
+  test::FillValues<float>(&rows_filter, initial_values_rows);
+  test::FillValues<float>(&cols_filter, initial_values_cols);
+
+  return {{planes_filter, rows_filter, cols_filter}};
 }
 
 Tensor CreateOutput(int batch_size, int channels, int cols, int rows, int planes, std::vector<float> values) {
@@ -183,6 +231,19 @@ TEST_F(Conv3dOpTest, BatchImageSingleFilter) {
   }
   Tensor output = tensorflow::CreateOutput(batch_size, 1, 4, 3, 2, output_values);
   HandwrittenConv(image, filter, 1, output);
+}
+
+TEST_F(ConvSpatialSeparable3DOpTest, Small) {
+  int batch_size = 10;
+  Tensor image = tensorflow::CreateImage(batch_size, 1, 4, 3, 2);
+  std::array<Tensor,3> filters = tensorflow::CreateFilters(3, 1, 1);
+  std::vector<float> output_values_1 = {1800, 2768, 3008, 2036, 3045, 4638, 4971, 3339, 2132, 3224, 3428, 2288, 1116, 1688, 1820, 1208, 1803, 2694, 2865, 1881, 1160, 1712, 1808, 1172};
+  std::vector<float> output_values;
+  for (int b=0; b<batch_size; b++) {
+    output_values.insert(output_values.end(), output_values_1.begin(), output_values_1.end());
+  }
+  Tensor output = tensorflow::CreateOutput(batch_size, 1, 4, 3, 2, output_values);
+  HandwrittenConv(image, filters[0],filters[1], filters[2], 1, output);
 }
 
 }
