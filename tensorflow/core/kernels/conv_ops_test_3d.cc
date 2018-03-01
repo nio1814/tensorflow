@@ -135,8 +135,9 @@ Tensor CreateImage(int batch_size, int image_channels, int image_cols, int image
   Tensor image(DT_FLOAT, {batch_size, image_planes, image_rows, image_cols,
                           image_channels});
   std::vector<float> initialValues;
+  int image_size = image_planes*image_rows*image_cols;
   for (int n = 0; n<image.NumElements(); n++) {
-    initialValues.push_back(n+1);
+    initialValues.push_back(n%image_size + 1);
   }
   test::FillValues<float>(&image, initialValues);
 
@@ -168,6 +169,19 @@ TEST_F(Conv3dOpTest, SingleImageSingleFilter) {
   Tensor image = tensorflow::CreateImage(1, 1, 4, 3, 2);
   Tensor filter = tensorflow::CreateFilter(3, 1, 1);
   Tensor output = tensorflow::CreateOutput(1, 1, 4, 3, 2, {1800, 2768, 3008, 2036, 3045, 4638, 4971, 3339, 2132, 3224, 3428, 2288, 1116, 1688, 1820, 1208, 1803, 2694, 2865, 1881, 1160, 1712, 1808, 1172});
+  HandwrittenConv(image, filter, 1, output);
+}
+
+TEST_F(Conv3dOpTest, BatchImageSingleFilter) {
+  int batch_size = 10;
+  Tensor image = tensorflow::CreateImage(batch_size, 1, 4, 3, 2);
+  Tensor filter = tensorflow::CreateFilter(3, 1, 1);
+  std::vector<float> output_values_1 = {1800, 2768, 3008, 2036, 3045, 4638, 4971, 3339, 2132, 3224, 3428, 2288, 1116, 1688, 1820, 1208, 1803, 2694, 2865, 1881, 1160, 1712, 1808, 1172};
+  std::vector<float> output_values;
+  for (int b=0; b<batch_size; b++) {
+    output_values.insert(output_values.end(), output_values_1.begin(), output_values_1.end());
+  }
+  Tensor output = tensorflow::CreateOutput(batch_size, 1, 4, 3, 2, output_values);
   HandwrittenConv(image, filter, 1, output);
 }
 
