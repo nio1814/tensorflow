@@ -17,28 +17,32 @@ limitations under the License.
 #include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/fake_input.h"
 #include "tensorflow/core/graph/graph_constructor.h"
+#include "tensorflow/core/platform/test_benchmark.h"
+#include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
+
+#include <cstdio>
 
 namespace tensorflow {
 
-//static void SetConstOp(const string& name, std::initializer_list<int64> dimensions, DataType data_type, tensorflow::NodeDef* node) {
-//  Tensor tensor(data_type, TensorShape(dimensions));
-//  for (int64 i=0; i<tensor.NumElements(); i++) {
-//    switch (data_type) {
-//      case DT_FLOAT:
-//        tensor.flat<float>()(i) = i/10.0f;
-//        break;
-//      case DT_HALF:
-//        tensor.flat<Eigen::half>()(i) = Eigen::half(1/10.0f);
-//        break;
-//      default:
-//        LOG(FATAL) << "Unknown data type " << data_type;
-//    }
-//  }
-//  TF_CHECK_OK(NodeDefBuilder(name, "Const")
-//              .Attr("dtype", data_type)
-//              .Attr("value", tensor)
-//              .Finalize(node));
-//}
+static void SetConstOp(const string& name, TensorShape dimensions, DataType data_type, NodeDef* node) {
+  Tensor tensor(data_type, dimensions);
+  for (int64 i=0; i<tensor.NumElements(); i++) {
+    switch (data_type) {
+      case DT_FLOAT:
+        tensor.flat<float>()(i) = i/10.0f;
+        break;
+      case DT_HALF:
+        tensor.flat<Eigen::half>()(i) = Eigen::half(1/10.0f);
+        break;
+      default:
+        LOG(FATAL) << "Unknown data type " << data_type;
+    }
+  }
+  TF_CHECK_OK(NodeDefBuilder(name, "Const")
+              .Attr("dtype", data_type)
+              .Attr("value", tensor)
+              .Finalize(node));
+}
 
 class Conv3dOpTest : public OpsTestBase
 {
@@ -100,18 +104,80 @@ protected:
   }
 };
 
+void Conv3dFloatBenchmark(const Tensor& image, const Tensor& filter, int stride, Padding padding, int num_iterations, bool use_gpu, int num_threads, string label) {
+  testing::SetLabel(label);
+
+  SessionOptions session_options;
+  session_options.config.set_intra_op_parallelism_threads(num_threads);
+
+  GraphDef graph_def;
+
+  SetConstOp("input", image.shape(), image.dtype(), graph_def.add_node());
+  SetConstOp("filter", filter.shape(), filter.dtype(), graph_def.add_node());
+
+  NodeDef* conv = graph_def.add_node();
+  TF_EXPECT_OK(NodeDefBuilder("conv3d", "Conv3D")
+                   .Input("input", 0, DT_FLOAT)
+                   .Input("filter", 0, DT_FLOAT)
+//                   .Attr("T", DT_FLOAT)
+                   .Attr("strides", {1, stride, stride, stride, 1})
+                   .Attr("padding", padding==VALID ? "VALID" : "SAME")
+                   .Finalize(conv));
+
+//  std::unique_ptr<Graph> graph(new Graph(OpRegistry::Global()));
+  Graph* graph = new Graph(OpRegistry::Global());
+  GraphConstructorOptions graph_options;
+  TF_CHECK_OK(ConvertGraphDefToGraph(graph_options, graph_def, graph));
+  string device = use_gpu ? "gpu" : "cpu";
+//  testing::UseRealTime();
+  test::Benchmark(device, graph, &session_options).Run(num_iterations);
+}
+
+void ConvSpatialSeparable3dFloatBenchmark(const Tensor& image, const Tensor& filter_planes, const Tensor& filter_rows, const Tensor& filter_cols, int stride, Padding padding, int num_iterations, bool use_gpu, int num_threads, string label) {
+  testing::SetLabel(label);
+
+  SessionOptions session_options;
+  session_options.config.set_intra_op_parallelism_threads(num_threads);
+
+  GraphDef graph_def;
+
+  SetConstOp("input", image.shape(), image.dtype(), graph_def.add_node());
+  SetConstOp("filter_planes", filter_planes.shape(), filter_planes.dtype(), graph_def.add_node());
+  SetConstOp("filter_rows", filter_rows.shape(), filter_rows.dtype(), graph_def.add_node());
+  SetConstOp("filter_cols", filter_cols.shape(), filter_cols.dtype(), graph_def.add_node());
+
+  NodeDef* conv = graph_def.add_node();
+  TF_EXPECT_OK(NodeDefBuilder("conv3d", "ConvSpatialSeparable3D")
+                   .Input("input", 0, DT_FLOAT)
+                   .Input("filter_planes", 0, DT_FLOAT)
+                   .Input("filter_rows", 0, DT_FLOAT)
+                   .Input("filter_cols", 0, DT_FLOAT)
+//                   .Attr("T", DT_FLOAT)
+                   .Attr("strides", {1, stride, stride, stride, 1})
+                   .Attr("padding", padding==VALID ? "VALID" : "SAME")
+                   .Finalize(conv));
+
+//  std::unique_ptr<Graph> graph(new Graph(OpRegistry::Global()));
+  Graph* graph = new Graph(OpRegistry::Global());
+  GraphConstructorOptions graph_options;
+  TF_CHECK_OK(ConvertGraphDefToGraph(graph_options, graph_def, graph));
+  string device = use_gpu ? "gpu" : "cpu";
+//  testing::UseRealTime();
+  test::Benchmark(device, graph, &session_options).Run(num_iterations);
+}
+
 class ConvSpatialSeparable3DOpTest : public OpsTestBase
 {
 protected:
-  void HandwrittenConv(const Tensor& image, const Tensor& filter_planes, const Tensor& filter_rows, const Tensor& filter_cols, int stride, const Tensor& expected) {
+  void HandwrittenConv(const Tensor& image, const Tensor& filter_planes, const Tensor& filter_rows, const Tensor& filter_cols, int stride, Padding padding, const Tensor& expected) {
     TF_EXPECT_OK(NodeDefBuilder("conv3d", "ConvSpatialSeparable3D")
                      .Input(FakeInput(DT_FLOAT))
                      .Input(FakeInput(DT_FLOAT))
                      .Input(FakeInput(DT_FLOAT))
                      .Input(FakeInput(DT_FLOAT))
-                     .Attr("T", DT_FLOAT)
+//                     .Attr("T", DT_FLOAT)
                      .Attr("strides", {1, stride, stride, stride, 1})
-                     .Attr("padding", "SAME")
+                     .Attr("padding", padding==VALID ? "VALID" : "SAME")
 //                     .Attr("dilations", {1,1,1,1})
                      .Finalize(node_def()));
     TF_EXPECT_OK(InitOp());
@@ -191,7 +257,7 @@ std::array<Tensor,3> CreateFilters(int filter_size, int image_channels, int filt
   std::vector<float> initial_values_planes;
   std::vector<float> initial_values_rows;
   std::vector<float> initial_values_cols;
-  for (int n=0; n<filter_size*image_channels; n++) {
+  for (int n=0; n<filter_size*image_channels*filter_channels; n++) {
     int index = n+1;
     initial_values_planes.push_back(index*filter_size*filter_size);
     initial_values_rows.push_back(index*filter_size);
@@ -210,6 +276,25 @@ Tensor CreateOutput(int batch_size, int channels, int cols, int rows, int planes
       &output, values);
   return output;
 }
+
+static void Conv3dFloatBenchmark_1(int num_iterations) {
+  int channels = 16;
+  Tensor image = tensorflow::CreateImage(10, channels, 14, 14, channels);
+  Tensor filter = tensorflow::CreateFilter(5, channels, 32);
+
+  Conv3dFloatBenchmark(image, filter, 1, SAME, num_iterations, false, 1, "140-140-32");
+}
+
+static void ConvSpatialSeparable3dFloatBenchmark_1(int num_iterations) {
+  int channels = 16;
+  Tensor image = tensorflow::CreateImage(10, channels, 14, 14, channels);
+  std::array<Tensor,3> filters = tensorflow::CreateFilters(5, channels, 32);
+
+  ConvSpatialSeparable3dFloatBenchmark(image, filters[0], filters[1], filters[2], 1, SAME, num_iterations, false, 1, "14-14-32");
+}
+
+BENCHMARK(Conv3dFloatBenchmark_1);
+BENCHMARK(ConvSpatialSeparable3dFloatBenchmark_1);
 
 }
 
@@ -243,7 +328,20 @@ TEST_F(ConvSpatialSeparable3DOpTest, Small) {
     output_values.insert(output_values.end(), output_values_1.begin(), output_values_1.end());
   }
   Tensor output = tensorflow::CreateOutput(batch_size, 1, 4, 3, 2, output_values);
-  HandwrittenConv(image, filters[0],filters[1], filters[2], 1, output);
+  HandwrittenConv(image, filters[0],filters[1], filters[2], 1, SAME, output);
 }
+
+//TEST_F(ConvSpatialSeparable3DOpTest, Full) {
+//  int batch_size = 10;
+//  Tensor image = tensorflow::CreateImage(batch_size, 8, 14, 14, 32);
+//  std::array<Tensor,3> filters = tensorflow::CreateFilters(5, 8, 16);
+////  std::vector<float> output_values_1 = {37800, 48330, 52380, 26865, 57240, 72252, 77112, 39366, 31320, 39366, 41796, 21303, 24300, 30942, 33372, 17091, 36288, 45684, 48600, 24786, 19764, 24786, 26244, 13365};
+//  std::vector<float> output_values(image.NumElements()*2);
+////  for (int b=0; b<batch_size; b++) {
+////    output_values.insert(output_values.end(), output_values_1.begin(), output_values_1.end());
+////  }
+//  Tensor output = tensorflow::CreateOutput(batch_size, 16, 14, 14, 32, output_values);
+//  HandwrittenConv(image, filters[0],filters[1], filters[2], 1, output);
+//}
 
 }
